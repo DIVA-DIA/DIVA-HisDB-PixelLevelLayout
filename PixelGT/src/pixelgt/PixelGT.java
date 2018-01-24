@@ -22,7 +22,11 @@ import org.jdom2.input.SAXBuilder;
  * @author Mathias Seuret
  */
 public class PixelGT {
-    
+    /**
+     * This map maps area types as indicated in the XML file to
+     * integer numbers, as indicated at
+     * https://diuf.unifr.ch/main/hisdoc/icdar2017-hisdoc-layout-comp
+     */
     static HashMap<String, Integer> nameToCode = new HashMap<>();
     static {
         nameToCode.put("background", 1);
@@ -32,6 +36,7 @@ public class PixelGT {
     }
 
     /**
+     * The arguments are file names, first two as inputs, last two as outputs.
      * @param args the command line arguments
      */
     public static void main(String[] args) throws IOException, JDOMException {
@@ -41,8 +46,11 @@ public class PixelGT {
             System.exit(1);
         }
         System.out.println("Starting the generation");
+        // Due to a bug in an early version of this tool, this print has been
+        // added to make sure everybody was using the newest version.
         System.out.println("\t(corrected version)");
         
+        // Storing the parameters in meaningful variables.
         String xmlFileName = args[0];
         String inImageName = args[1];
         String outBinName = args[2];
@@ -54,30 +62,49 @@ public class PixelGT {
         System.out.println("Binarizing");
         BufferedImage bin = Binarizer.binarize(ori);
         
+        // Draws the polygons onto an image - does not take into account
+        // ink vs background yet
         BufferedImage poly = drawPolygons(xmlFileName);
         
+        // Merges a binary image and the polygons to produce the final
+        // version of the labels - including the boundary pixels
         System.out.println("Merging polygones and binarized data");
         generateGroundTruth(poly, bin);
         
+        // Output
         ImageIO.write(bin, "png", new File(outBinName));
         ImageIO.write(poly, "png", new File(outGTName));
     }
     
+    /**
+     * Combines the drawn polygons and the binary image to produce the ground
+     * truth with the boundary pixels, and remove foreground outside of
+     * polygons.
+     * @param poly polygon image
+     * @param bin binarized image
+     */
     public static void generateGroundTruth(BufferedImage poly, BufferedImage bin) {
+        // Storing into a variable for performance purpose
         int bgCode = nameToCode.get("background");
         for (int x=0; x<poly.getWidth(); x++) {
             for (int y=0; y<poly.getHeight(); y++) {
+                // Get the labels of the polygon image (discard alpha channel)
                 int code = poly.getRGB(x, y) & 0xFFFFFF;
+                
+                // Check if the binarization indicates there is foreground
                 boolean fg = (bin.getRGB(x, y) & 0x1)==0;
                 
-                // Nothing there
+                // Outside of polygons, so no content
                 if (code==0x000000) {
+                    // Paint binary image with background
                     bin.setRGB(x, y, 0xFFFFFF);
+                    // Set GT image to background
                     poly.setRGB(x, y, bgCode);
                     continue;
                 }
                 
-                // boundary
+                // If there is no foreground detected but we are in a polygon (see
+                // 'continue' just above), then we tag the pixel as boundary
                 if (!fg) {
                     poly.setRGB(x,y, 0x800000 | code);
                 }
@@ -85,6 +112,13 @@ public class PixelGT {
         }
     }
     
+    /**
+     * Draws the polygons from an XML file.
+     * @param xmlFileName name of the XML file
+     * @return an image
+     * @throws JDOMException if the XML is invalid
+     * @throws IOException  if the file cannot be read
+     */
     public static BufferedImage drawPolygons(String xmlFileName) throws JDOMException, IOException {
         System.out.println("Opening XML file");
         SAXBuilder builder = new SAXBuilder();
@@ -108,6 +142,12 @@ public class PixelGT {
         return res;
     }
     
+    /**
+     * Draws a polygon onto an image
+     * @param image target image
+     * @param coords jdom2 element containing the coordinates
+     * @param mask binary mask to use (see link at description of nameToCode)
+     */
     public static void drawPolygon(BufferedImage image, Element coords, int mask) {
         if (coords==null) {
             throw new Error("no Coords tage found");
