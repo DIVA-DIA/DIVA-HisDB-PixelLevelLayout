@@ -5,12 +5,13 @@
  */
 package pixelgt;
 
-import java.awt.Color;
 import java.awt.Polygon;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
 import javax.imageio.ImageIO;
 import org.jdom2.Document;
 import org.jdom2.Element;
@@ -31,9 +32,13 @@ public class PixelGT {
     static {
         nameToCode.put("background", 1);
         nameToCode.put("comment", 2);
+        nameToCode.put("handwritten-annotation", 2);
         nameToCode.put("decoration", 4);
         nameToCode.put("textline", 8);
     }
+    
+    static int loadedImageWidth = 0;
+    static int loadedImageHeight = 0;
 
     /**
      * The arguments are file names, first two as inputs, last two as outputs.
@@ -58,6 +63,8 @@ public class PixelGT {
         
         System.out.println("Loading image");
         BufferedImage ori = ImageIO.read(new File(inImageName));
+        loadedImageWidth = ori.getWidth();
+        loadedImageHeight = ori.getHeight();
         
         System.out.println("Binarizing");
         BufferedImage bin = Binarizer.binarize(ori);
@@ -124,21 +131,48 @@ public class PixelGT {
         SAXBuilder builder = new SAXBuilder();
         Document xml = builder.build(new File(xmlFileName));
         Element root = xml.getRootElement();
-        Element page = root.getChild("Page");
+        Element page = getChild(root, "Page");
         
-        int width = Integer.parseInt(page.getAttributeValue("imageWidth"));
-        int height = Integer.parseInt(page.getAttributeValue("imageHeight"));
+        int width = (page.getAttribute("imageWidth")==null) ? loadedImageWidth : Integer.parseInt(page.getAttributeValue("imageWidth"));
+        int height = (page.getAttribute("imageHeight")==null) ? loadedImageHeight : Integer.parseInt(page.getAttributeValue("imageHeight"));
         BufferedImage res = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
         
-        System.out.println("Drawing "+page.getChildren("TextRegion").size()+" polygons");
-        for (Element tr : page.getChildren("TextRegion")) {
+        
+        
+        List<Element> children = new LinkedList<>();
+        children.addAll(getChildren(page, "TextRegion"));
+        children.addAll(getChildren(page, "GraphicRegion"));
+        System.out.println("Drawing "+children.size()+" polygons");
+        for (Element tr : children) {
             String type = tr.getAttributeValue("type");
             if (!nameToCode.keySet().contains(type)) {
-                throw new Error("Unknown region type: "+type);
+                System.err.println("Unknown region type: "+type);
+                System.err.println("\tEither ignore it or add it to the static initialization block of PixelGT.java and recompile");
+                continue;
             }
-            drawPolygon(res, tr.getChild("Coords"), nameToCode.get(type));
+            drawPolygon(res, getChild(tr, "Coords"), nameToCode.get(type));
         }
         
+        return res;
+    }
+    
+    // Dirty but ignores namespaces
+    private static Element getChild(Element parent, String name) {
+        for (Element e : parent.getChildren()) {
+            if (e.getName().equals(name)) {
+                return e;
+            }
+        }
+        return null;
+    }
+    
+    private static List<Element> getChildren(Element parent, String name) {
+        List<Element> res = new LinkedList<>();
+        for (Element e : parent.getChildren()) {
+            if (e.getName().equals(name)) {
+                res.add(e);
+            }
+        }
         return res;
     }
     
@@ -153,10 +187,20 @@ public class PixelGT {
             throw new Error("no Coords tage found");
         }
         Polygon poly = new Polygon();
-        for (Element pt : coords.getChildren()) {
-            int x = Integer.parseInt(pt.getAttributeValue("x"));
-            int y = Integer.parseInt(pt.getAttributeValue("y"));
-            poly.addPoint(x, y);
+        if (coords.getChildren().isEmpty()) {
+            String ptsStr = coords.getAttributeValue("points");
+            for (String ptStr : ptsStr.split(" ")) {
+                String[] c = ptStr.split(",");
+                int x = Integer.parseInt(c[0]);
+                int y = Integer.parseInt(c[1]);
+                poly.addPoint(x, y);
+            }
+        } else {
+            for (Element pt : coords.getChildren()) {
+                int x = Integer.parseInt(pt.getAttributeValue("x"));
+                int y = Integer.parseInt(pt.getAttributeValue("y"));
+                poly.addPoint(x, y);
+            }
         }
         for (int x=poly.getBounds().x; x<=poly.getBounds().x+poly.getBounds().width; x++) {
             for (int y=poly.getBounds().y; y<=poly.getBounds().y+poly.getBounds().height; y++) {
